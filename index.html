@@ -16,6 +16,10 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Animated GIF 프레임 파싱 라이브러리 -->
+<script src="https://cdn.jsdelivr.net/npm/libgif@1.0.1/libgif.js"></script>
+
 <style>
   :root{
     --bg: #14181a;
@@ -407,9 +411,9 @@
   const fullscreenBtn = document.getElementById('fullscreenBtn');
   const exitFsBtn = document.getElementById('exitFsBtn');
 
-  let mediaEl = null;       // <img> or <video>
-  let mediaType = null;     // 'image' | 'video'
-  let hiddenImgEl = null;   // off-screen <img> kept in the DOM so animated GIFs keep playing
+  let mediaEl = null;       // <img>, <video>, or SuperGif object
+  let mediaType = null;     // 'image' | 'video' | 'gif'
+  let tempGifImg = null;    // temporary DOM node for libgif parsing
   let rafId = null;
   let mediaRecorder = null;
   let recordedChunks = [];
@@ -422,7 +426,6 @@
     showBg: true,
     size: 34,
     color: '#e8a33d',
-    // position as fraction of canvas width/height (top-left anchor of text baseline area)
     x: 0.5,
     y: 0.88
   };
@@ -469,12 +472,14 @@
 
   function loadMedia(file){
     stopEverything();
-    if(hiddenImgEl){
-      hiddenImgEl.remove();
-      hiddenImgEl = null;
+    if(tempGifImg){
+      tempGifImg.remove();
+      tempGifImg = null;
     }
+    
     const url = URL.createObjectURL(file);
     const isVideo = file.type.startsWith('video/');
+    const isGif = file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif');
 
     if(isVideo){
       mediaType = 'video';
@@ -491,23 +496,27 @@
         enableExport();
         startLoop();
       });
+    } else if(isGif){
+      mediaType = 'gif';
+      const img = document.createElement('img');
+      img.src = url;
+      img.style.display = 'none';
+      document.body.appendChild(img);
+      tempGifImg = img;
+
+      // libgif.js(SuperGif)를 사용하여 GIF 프레임 파싱 및 애니메이션 처리
+      const rub = new SuperGif({ gif: img, auto_play: true });
+      rub.load(() => {
+        const gifCanvas = rub.get_canvas();
+        setCanvasSize(gifCanvas.width, gifCanvas.height);
+        mediaEl = rub;
+        stage.classList.remove('empty');
+        enableExport();
+        startLoop();
+      });
     } else {
       mediaType = 'image';
-      // 일부 모바일 브라우저는 opacity:0 이거나 화면 밖으로 치워진 요소는
-      // 애니메이션 프레임 자체를 그리지 않습니다(렌더링 최적화로 건너뜀).
-      // 그래서 화면 밖으로 숨기는 대신, 캔버스 바로 뒤에 실제 크기·불투명도로
-      // 깔아둬서 항상 다시 그려지게(=계속 애니메이션 되게) 만듭니다.
-      // 사용자 눈에는 위에 덮인 캔버스만 보이므로 화면상 티는 안 납니다.
       const img = new Image();
-      img.style.position = 'absolute';
-      img.style.inset = '0';
-      img.style.width = '100%';
-      img.style.height = '100%';
-      img.style.zIndex = '-1';
-      img.style.pointerEvents = 'none';
-      img.setAttribute('aria-hidden', 'true');
-      stage.appendChild(img);
-      hiddenImgEl = img;
       img.onload = () => {
         setCanvasSize(img.naturalWidth, img.naturalHeight);
         mediaEl = img;
@@ -520,7 +529,6 @@
   }
 
   function setCanvasSize(w, h){
-    // cap internal resolution for performance, keep aspect ratio
     const maxDim = 1280;
     let cw = w, ch = h;
     if(Math.max(w,h) > maxDim){
@@ -558,10 +566,15 @@
 
   function draw(){
     if(!mediaEl) return;
-    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     try{
-      ctx.drawImage(mediaEl, 0, 0, canvas.width, canvas.height);
-    }catch(err){ /* image not ready yet */ }
+      if(mediaType === 'gif'){
+        const gifCanvas = mediaEl.get_canvas();
+        ctx.drawImage(gifCanvas, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.drawImage(mediaEl, 0, 0, canvas.width, canvas.height);
+      }
+    }catch(err){ /* media not ready */ }
     drawClock();
   }
 
@@ -593,7 +606,7 @@
     const timeStr = formatTimeString();
     const dateStr = clock.showDate ? formatDateString() : null;
 
-    const fontSize = clock.size * (canvas.width / 640); // scale relative to a 640px reference
+    const fontSize = clock.size * (canvas.width / 640);
     ctx.font = `600 ${fontSize}px 'Share Tech Mono', monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -611,7 +624,6 @@
     const blockWidth = Math.max(timeWidth, dateWidth);
     const padX = fontSize * 0.45;
     const padY = fontSize * 0.35;
-    const lineGap = dateStr ? fontSize * 0.62 : 0;
     const totalHeight = fontSize + (dateStr ? dateFontSize + fontSize*0.25 : 0);
 
     if(clock.showBg){
