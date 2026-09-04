@@ -1,4 +1,4 @@
-const CACHE_NAME = 'clock-overlay-v1';
+const CACHE_NAME = 'clock-overlay-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -28,8 +28,10 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.mode === 'navigate') {
+    // always try the network first, and bypass the browser's own HTTP disk
+    // cache (no-store) so a fresh deploy is never masked by Cache-Control.
     event.respondWith(
-      fetch(req).catch(() => caches.match('./index.html'))
+      fetch(req, { cache: 'no-store' }).catch(() => caches.match('./index.html'))
     );
     return;
   }
