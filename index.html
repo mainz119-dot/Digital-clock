@@ -1125,10 +1125,28 @@
 
   window.addEventListener('resize', resizeCanvas);
 
-  // ---------- PWA: register service worker ----------
+  // ---------- PWA: register service worker + auto-update ----------
   if('serviceWorker' in navigator){
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+      navigator.serviceWorker.register('./service-worker.js').then((reg) => {
+        // ask the browser to check for a newer service-worker.js whenever
+        // the app comes back to the foreground (home-screen relaunch, tab switch, etc.)
+        document.addEventListener('visibilitychange', () => {
+          if(document.visibilityState === 'visible'){
+            reg.update().catch(() => {});
+          }
+        });
+        reg.update().catch(() => {});
+      }).catch(() => {});
+
+      // once a newer service worker takes control, reload once to load the
+      // latest index.html/assets it now serves
+      let alreadyReloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if(alreadyReloaded) return;
+        alreadyReloaded = true;
+        location.reload();
+      });
     });
   }
 
