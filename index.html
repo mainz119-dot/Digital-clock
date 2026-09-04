@@ -493,18 +493,20 @@
       });
     } else {
       mediaType = 'image';
-      // GIF 애니메이션은 브라우저가 <img>가 실제 문서(DOM)에 붙어 있어야 프레임을
-      // 계속 진행시킵니다. 화면 밖으로 옮겨서 안 보이게만 하고 DOM에는 붙여둡니다.
-      // (display:none / visibility:hidden 은 애니메이션을 멈추게 하므로 사용하지 않음)
+      // 일부 모바일 브라우저는 opacity:0 이거나 화면 밖으로 치워진 요소는
+      // 애니메이션 프레임 자체를 그리지 않습니다(렌더링 최적화로 건너뜀).
+      // 그래서 화면 밖으로 숨기는 대신, 캔버스 바로 뒤에 실제 크기·불투명도로
+      // 깔아둬서 항상 다시 그려지게(=계속 애니메이션 되게) 만듭니다.
+      // 사용자 눈에는 위에 덮인 캔버스만 보이므로 화면상 티는 안 납니다.
       const img = new Image();
-      img.style.position = 'fixed';
-      img.style.left = '-99999px';
-      img.style.top = '0';
-      img.style.width = '1px';
-      img.style.height = '1px';
-      img.style.opacity = '0';
+      img.style.position = 'absolute';
+      img.style.inset = '0';
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.zIndex = '-1';
+      img.style.pointerEvents = 'none';
       img.setAttribute('aria-hidden', 'true');
-      document.body.appendChild(img);
+      stage.appendChild(img);
       hiddenImgEl = img;
       img.onload = () => {
         setCanvasSize(img.naturalWidth, img.naturalHeight);
