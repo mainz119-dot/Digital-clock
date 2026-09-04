@@ -308,6 +308,70 @@
     vertical-align: middle;
     margin-left: 6px;
   }
+  .preset-name-input{
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--text);
+    padding: 9px 10px;
+    font-family: inherit;
+    font-size: 13px;
+    outline: none;
+  }
+  .preset-name-input:focus{ border-color: var(--teal); }
+  .preset-grid{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .preset-card{
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #0f1213;
+    transition: border-color .15s;
+  }
+  .preset-card:hover{ border-color: var(--teal); }
+  .preset-card img{
+    display: block;
+    width: 100%;
+    aspect-ratio: 16/10;
+    object-fit: cover;
+  }
+  .preset-card .preset-name{
+    font-size: 11px;
+    padding: 5px 6px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .preset-card .preset-del{
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(15,18,19,0.7);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    border: none;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .preset-empty{
+    grid-column: 1 / -1;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 8px 0;
+  }
 
   /* ---- fullscreen viewing mode ---- */
   .exit-fs-btn{
@@ -381,6 +445,14 @@
     </div>
 
     <div class="group">
+      <div class="group-label">저장된 배경</div>
+      <input type="text" class="preset-name-input" id="presetNameInput" placeholder="이름 (예: 침실 시계)">
+      <button class="btn primary" id="savePresetBtn" disabled>현재 화면을 프리셋으로 저장</button>
+      <div class="preset-grid" id="presetGrid"></div>
+      <div class="hint">프리셋을 누르면 그 배경과 시계 설정으로 바로 전체화면이 열려요.</div>
+    </div>
+
+    <div class="group">
       <div class="group-label">시간 형식</div>
       <div class="seg" id="formatSeg">
         <button data-val="24" class="active">24시간</button>
@@ -450,19 +522,32 @@
   const autosaveHint = document.getElementById('autosaveHint');
   const clearSavedBtn = document.getElementById('clearSavedBtn');
   const settingsSummary = document.getElementById('settingsSummary');
+  const presetNameInput = document.getElementById('presetNameInput');
+  const savePresetBtn = document.getElementById('savePresetBtn');
+  const presetGrid = document.getElementById('presetGrid');
   let lastMediaName = '';
+  let currentMediaBlob = null;
+  let currentMediaMime = '';
 
   const SETTINGS_KEY = 'clockOverlaySettings_v1';
   const DB_NAME = 'clockOverlayDB';
+  const DB_VERSION = 2;
   const STORE_NAME = 'media';
+  const PRESET_STORE = 'presets';
   const MEDIA_KEY = 'currentMedia';
 
-  // ---------- persistence: IndexedDB (media file) ----------
+  // ---------- persistence: IndexedDB (media file + presets) ----------
   function openDB(){
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore(STORE_NAME);
+        const db = req.result;
+        if(!db.objectStoreNames.contains(STORE_NAME)){
+          db.createObjectStore(STORE_NAME);
+        }
+        if(!db.objectStoreNames.contains(PRESET_STORE)){
+          db.createObjectStore(PRESET_STORE, { keyPath: 'id', autoIncrement: true });
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -505,6 +590,58 @@
     }catch(err){ /* ignore */ }
   }
 
+  function addPreset(record){
+    return new Promise(async (resolve, reject) => {
+      try{
+        const db = await openDB();
+        const tx = db.transaction(PRESET_STORE, 'readwrite');
+        const req = tx.objectStore(PRESET_STORE).add(record);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      }catch(err){ reject(err); }
+    });
+  }
+
+  function listPresets(){
+    return new Promise(async (resolve) => {
+      try{
+        const db = await openDB();
+        const tx = db.transaction(PRESET_STORE, 'readonly');
+        const req = tx.objectStore(PRESET_STORE).getAll();
+        req.onsuccess = () => {
+          const arr = req.result || [];
+          arr.sort((a, b) => b.createdAt - a.createdAt);
+          resolve(arr);
+        };
+        req.onerror = () => resolve([]);
+      }catch(err){ resolve([]); }
+    });
+  }
+
+  function getPreset(id){
+    return new Promise(async (resolve) => {
+      try{
+        const db = await openDB();
+        const tx = db.transaction(PRESET_STORE, 'readonly');
+        const req = tx.objectStore(PRESET_STORE).get(id);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      }catch(err){ resolve(null); }
+    });
+  }
+
+  function deletePreset(id){
+    return new Promise(async (resolve) => {
+      try{
+        const db = await openDB();
+        const tx = db.transaction(PRESET_STORE, 'readwrite');
+        tx.objectStore(PRESET_STORE).delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      }catch(err){ resolve(); }
+    });
+  }
+
   // ---------- persistence: localStorage (clock settings) ----------
   function saveSettings(){
     try{
@@ -536,6 +673,105 @@
       <div class="row2"><span>위치</span><span>가로 ${Math.round(clock.x*100)}% · 세로 ${Math.round(clock.y*100)}%</span></div>
     `;
   }
+
+  function escapeHtml(s){
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  // small preview image combining current media frame + clock, for preset cards
+  function generateThumbnail(){
+    const thumbW = 240;
+    const thumbH = Math.round(thumbW * (10/16)); // matches .stage's 16/10 box
+    const off = document.createElement('canvas');
+    off.width = thumbW;
+    off.height = thumbH;
+    const offCtx = off.getContext('2d');
+    offCtx.fillStyle = '#0f1213';
+    offCtx.fillRect(0, 0, thumbW, thumbH);
+    if(bgMediaEl){
+      const mw = mediaType === 'video' ? bgMediaEl.videoWidth : bgMediaEl.naturalWidth;
+      const mh = mediaType === 'video' ? bgMediaEl.videoHeight : bgMediaEl.naturalHeight;
+      if(mw && mh){
+        const scale = Math.min(thumbW/mw, thumbH/mh);
+        const w = mw*scale, h = mh*scale;
+        const x = (thumbW-w)/2, y = (thumbH-h)/2;
+        try{ offCtx.drawImage(bgMediaEl, x, y, w, h); }catch(err){ /* not decoded yet */ }
+      }
+    }
+    drawClock(offCtx, thumbW, thumbH, clock);
+    return off.toDataURL('image/jpeg', 0.72);
+  }
+
+  async function saveCurrentAsPreset(name){
+    if(!bgMediaEl || !currentMediaBlob){
+      alert('먼저 배경으로 쓸 사진·GIF·동영상을 넣어주세요.');
+      return;
+    }
+    const record = {
+      name: name || lastMediaName || '프리셋',
+      blob: currentMediaBlob,
+      mime: currentMediaMime,
+      mediaName: lastMediaName,
+      clock: { ...clock },
+      thumb: generateThumbnail(),
+      createdAt: Date.now()
+    };
+    await addPreset(record);
+    await refreshPresetList();
+  }
+
+  async function loadPreset(id){
+    const rec = await getPreset(id);
+    if(!rec) return;
+    Object.assign(clock, rec.clock);
+    syncControlsFromState();
+    lastMediaName = rec.mediaName || rec.name;
+    filenameEl.textContent = lastMediaName;
+    currentMediaBlob = rec.blob;
+    currentMediaMime = rec.mime;
+    // persist=true: this preset also becomes what auto-launch resumes next time
+    loadMedia(rec.blob, true, lastMediaName);
+    saveSettings();
+    updateSettingsSummary();
+    enterFullscreenMode();
+  }
+
+  async function refreshPresetList(){
+    const list = await listPresets();
+    presetGrid.innerHTML = '';
+    if(list.length === 0){
+      presetGrid.innerHTML = '<div class="preset-empty">아직 저장된 프리셋이 없어요.</div>';
+      return;
+    }
+    list.forEach(rec => {
+      const card = document.createElement('div');
+      card.className = 'preset-card';
+      card.innerHTML = `
+        <img src="${rec.thumb}" alt="">
+        <div class="preset-name">${escapeHtml(rec.name)}</div>
+        <button class="preset-del" data-id="${rec.id}" title="삭제">✕</button>
+      `;
+      card.addEventListener('click', (e) => {
+        if(e.target.closest('.preset-del')) return;
+        loadPreset(rec.id);
+      });
+      card.querySelector('.preset-del').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deletePreset(rec.id);
+        refreshPresetList();
+      });
+      presetGrid.appendChild(card);
+    });
+  }
+
+  savePresetBtn.addEventListener('click', async () => {
+    const name = presetNameInput.value.trim();
+    await saveCurrentAsPreset(name);
+    presetNameInput.value = '';
+  });
+
 
   function syncControlsFromState(){
     document.querySelectorAll('#formatSeg button').forEach(b => {
@@ -608,6 +844,8 @@
     if(!file) return;
     filenameEl.textContent = file.name;
     lastMediaName = file.name;
+    currentMediaBlob = file;
+    currentMediaMime = file.type || '';
     loadMedia(file, true, file.name);
     updateSettingsSummary();
   });
@@ -674,6 +912,7 @@
 
   // ---------- restore on launch ----------
   async function restoreOnLaunch(){
+    refreshPresetList();
     const savedSettings = loadSettings();
     if(savedSettings){
       Object.assign(clock, savedSettings);
@@ -683,6 +922,8 @@
     if(rec && rec.blob){
       filenameEl.textContent = rec.name || '저장된 미디어';
       lastMediaName = rec.name || '저장된 미디어';
+      currentMediaBlob = rec.blob;
+      currentMediaMime = rec.type || '';
       updateAutosaveHint();
       loadMedia(rec.blob, false);
       updateSettingsSummary();
@@ -698,6 +939,7 @@
 
   function enableExport(){
     fullscreenBtn.disabled = false;
+    savePresetBtn.disabled = false;
   }
 
   // ---------- overlay canvas: draws ONLY the clock ----------
